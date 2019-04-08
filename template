@@ -1,0 +1,154 @@
+#!/bin/bash
+
+link_a_delay="1ms"
+link_a_loss="0%"
+link_a_rate="1gbit"
+
+link_b_delay="1ms"
+link_b_loss="0%"
+link_b_rate="1gbit"
+
+link_c_delay="1ms"
+link_c_loss="0%"
+link_c_rate="1gbit"
+
+link_d_delay="1ms"
+link_d_loss="0%"
+link_d_rate="1gbit"
+
+link_e_delay="$delayms"
+link_e_loss="$loss%"
+link_e_rate="$bandwidthmbit"
+
+user=$(whoami)
+
+if [ ${user} != "root" ]
+then
+	echo "${0}: Permission denied" 1>&2
+
+	exit 1
+fi
+
+pids+=($(ip netns pids peer-1 2> /dev/null))
+pids+=($(ip netns pids peer-2 2> /dev/null))
+pids+=($(ip netns pids peer-3 2> /dev/null))
+pids+=($(ip netns pids peer-4 2> /dev/null))
+pids+=($(ip netns pids router-1 2> /dev/null))
+pids+=($(ip netns pids router-2 2> /dev/null))
+
+kill ${pids[@]} 2> /dev/null
+
+ip netns delete peer-1 2> /dev/null
+ip netns delete peer-2 2> /dev/null
+ip netns delete peer-3 2> /dev/null
+ip netns delete peer-4 2> /dev/null
+ip netns delete router-1 2> /dev/null
+ip netns delete router-2 2> /dev/null
+
+ip netns add peer-1
+ip netns add peer-2
+ip netns add peer-3
+ip netns add peer-4
+ip netns add router-1
+ip netns add router-2
+
+ip netns exec peer-1 ip link set lo up
+ip netns exec peer-2 ip link set lo up
+ip netns exec peer-3 ip link set lo up
+ip netns exec peer-4 ip link set lo up
+ip netns exec router-1 ip link set lo up
+ip netns exec router-2 ip link set lo up
+
+ip link add eth-p1r1-0 type veth peer name eth-r1p1-0
+ip link add eth-p2r1-0 type veth peer name eth-r1p2-0
+ip link add eth-p3r2-0 type veth peer name eth-r2p3-0
+ip link add eth-p4r2-0 type veth peer name eth-r2p4-0
+ip link add eth-r1r2-0 type veth peer name eth-r2r1-0
+
+ip link set eth-p1r1-0 netns peer-1
+ip link set eth-p2r1-0 netns peer-2
+ip link set eth-p3r2-0 netns peer-3
+ip link set eth-p4r2-0 netns peer-4
+ip link set eth-r1p1-0 netns router-1
+ip link set eth-r1p2-0 netns router-1
+ip link set eth-r1r2-0 netns router-1
+ip link set eth-r2p3-0 netns router-2
+ip link set eth-r2p4-0 netns router-2
+ip link set eth-r2r1-0 netns router-2
+
+ip netns exec peer-1 ip link set eth-p1r1-0 up
+ip netns exec peer-2 ip link set eth-p2r1-0 up
+ip netns exec peer-3 ip link set eth-p3r2-0 up
+ip netns exec peer-4 ip link set eth-p4r2-0 up
+ip netns exec router-1 ip link set eth-r1p1-0 up
+ip netns exec router-1 ip link set eth-r1p2-0 up
+ip netns exec router-1 ip link set eth-r1r2-0 up
+ip netns exec router-2 ip link set eth-r2p3-0 up
+ip netns exec router-2 ip link set eth-r2p4-0 up
+ip netns exec router-2 ip link set eth-r2r1-0 up
+
+ip netns exec peer-1 ip address add 10.0.1.1/24 dev eth-p1r1-0
+ip netns exec peer-2 ip address add 10.0.2.2/24 dev eth-p2r1-0
+ip netns exec peer-3 ip address add 10.0.3.3/24 dev eth-p3r2-0
+ip netns exec peer-4 ip address add 10.0.4.4/24 dev eth-p4r2-0
+ip netns exec router-1 ip address add 10.0.1.5/24 dev eth-r1p1-0
+ip netns exec router-1 ip address add 10.0.2.5/24 dev eth-r1p2-0
+ip netns exec router-1 ip address add 10.0.5.5/24 dev eth-r1r2-0
+ip netns exec router-2 ip address add 10.0.3.6/24 dev eth-r2p3-0
+ip netns exec router-2 ip address add 10.0.4.6/24 dev eth-r2p4-0
+ip netns exec router-2 ip address add 10.0.5.6/24 dev eth-r2r1-0
+
+ip netns exec peer-1 ip route add default via 10.0.1.5 dev eth-p1r1-0
+ip netns exec peer-2 ip route add default via 10.0.2.5 dev eth-p2r1-0
+ip netns exec peer-3 ip route add default via 10.0.3.6 dev eth-p3r2-0
+ip netns exec peer-4 ip route add default via 10.0.4.6 dev eth-p4r2-0
+ip netns exec router-1 ip route add default via 10.0.5.6 dev eth-r1r2-0
+ip netns exec router-2 ip route add default via 10.0.5.5 dev eth-r2r1-0
+
+ip netns exec router-1 sysctl -w net.ipv4.ip_forward=1 > /dev/null
+ip netns exec router-2 sysctl -w net.ipv4.ip_forward=1 > /dev/null
+
+if ! [ ${link_a_loss} ] || [ $(echo ${link_a_loss:0:-1} == 0 | bc) == "1" ]
+then
+	ip netns exec peer-1 tc qdisc add dev eth-p1r1-0 root netem delay ${link_a_delay} rate ${link_a_rate}
+	ip netns exec router-1 tc qdisc add dev eth-r1p1-0 root netem delay ${link_a_delay} rate ${link_a_rate}
+else
+	ip netns exec peer-1 tc qdisc add dev eth-p1r1-0 root netem delay ${link_a_delay} loss ${link_a_loss} rate ${link_a_rate}
+	ip netns exec router-1 tc qdisc add dev eth-r1p1-0 root netem delay ${link_a_delay} loss ${link_a_loss} rate ${link_a_rate}
+fi
+
+if ! [ ${link_b_loss} ] || [ $(echo ${link_b_loss:0:-1} == 0 | bc) == "1" ]
+then
+	ip netns exec peer-2 tc qdisc add dev eth-p2r1-0 root netem delay ${link_b_delay} rate ${link_b_rate}
+	ip netns exec router-1 tc qdisc add dev eth-r1p2-0 root netem delay ${link_b_delay} rate ${link_b_rate}
+else
+	ip netns exec peer-2 tc qdisc add dev eth-p2r1-0 root netem delay ${link_b_delay} loss ${link_b_loss} rate ${link_b_rate}
+	ip netns exec router-1 tc qdisc add dev eth-r1p2-0 root netem delay ${link_b_delay} loss ${link_b_loss} rate ${link_b_rate}
+fi
+
+if ! [ ${link_c_loss} ] || [ $(echo ${link_c_loss:0:-1} == 0 | bc) == "1" ]
+then
+	ip netns exec peer-3 tc qdisc add dev eth-p3r2-0 root netem delay ${link_c_delay} rate ${link_c_rate}
+	ip netns exec router-2 tc qdisc add dev eth-r2p3-0 root netem delay ${link_c_delay} rate ${link_c_rate}
+else
+	ip netns exec peer-3 tc qdisc add dev eth-p3r2-0 root netem delay ${link_c_delay} loss ${link_c_loss} rate ${link_c_rate}
+	ip netns exec router-2 tc qdisc add dev eth-r2p3-0 root netem delay ${link_c_delay} loss ${link_c_loss} rate ${link_c_rate}
+fi
+
+if ! [ ${link_d_loss} ] || [ $(echo ${link_d_loss:0:-1} == 0 | bc) == "1" ]
+then
+	ip netns exec peer-4 tc qdisc add dev eth-p4r2-0 root netem delay ${link_d_delay} rate ${link_d_rate}
+	ip netns exec router-2 tc qdisc add dev eth-r2p4-0 root netem delay ${link_d_delay} rate ${link_d_rate}
+else
+	ip netns exec peer-4 tc qdisc add dev eth-p4r2-0 root netem delay ${link_d_delay} loss ${link_d_loss} rate ${link_d_rate}
+	ip netns exec router-2 tc qdisc add dev eth-r2p4-0 root netem delay ${link_d_delay} loss ${link_d_loss} rate ${link_d_rate}
+fi
+
+if ! [ ${link_e_loss} ] || [ $(echo ${link_e_loss:0:-1} == 0 | bc) == "1" ]
+then
+	ip netns exec router-1 tc qdisc add dev eth-r1r2-0 root netem delay ${link_e_delay} rate ${link_e_rate}
+	ip netns exec router-2 tc qdisc add dev eth-r2r1-0 root netem delay ${link_e_delay} rate ${link_e_rate}
+else
+	ip netns exec router-1 tc qdisc add dev eth-r1r2-0 root netem delay ${link_e_delay} loss ${link_e_loss} rate ${link_e_rate}
+	ip netns exec router-2 tc qdisc add dev eth-r2r1-0 root netem delay ${link_e_delay} loss ${link_e_loss} rate ${link_e_rate}
+fi

@@ -1,0 +1,26 @@
+#!/bin/bash
+
+user=$(whoami)
+
+if [ ${user} != "root" ]
+then
+	echo "${0}: Permission denied" 1>&2
+
+	exit 1
+fi
+
+pids+=($(ip netns pids peer-1 2> /dev/null))
+pids+=($(ip netns pids peer-2 2> /dev/null))
+pids+=($(ip netns pids peer-3 2> /dev/null))
+pids+=($(ip netns pids peer-4 2> /dev/null))
+pids+=($(ip netns pids router-1 2> /dev/null))
+pids+=($(ip netns pids router-2 2> /dev/null))
+
+kill ${pids[@]} 2> /dev/null
+
+ip netns delete peer-1 2> /dev/null
+ip netns delete peer-2 2> /dev/null
+ip netns delete peer-3 2> /dev/null
+ip netns delete peer-4 2> /dev/null
+ip netns delete router-1 2> /dev/null
+ip netns delete router-2 2> /dev/null
